@@ -55,8 +55,40 @@ function fmtData(iso){ const[y,m,d]=iso.split("-"); return d+"/"+m+"/"+y; }
 const DS=["Dom","Seg","Ter","Qua","Qui","Sex","Sáb"];
 function fmtDia(iso){ return DS[new Date(iso+"T12:00:00").getDay()]; }
 
-function stGet(k){ try{ const v=localStorage.getItem(k); return v?JSON.parse(v):null; }catch{return null;} }
-function stSet(k,v){ try{ localStorage.setItem(k,JSON.stringify(v)); }catch{} }
+/* ── IndexedDB storage (persistente, nao apagado por limpeza de cookies) ── */
+const DB_NAME="pontoDB", DB_VER=1, STORE="dados";
+let _db=null;
+function openDB(){
+  if(_db) return Promise.resolve(_db);
+  return new Promise((res,rej)=>{
+    const req=indexedDB.open(DB_NAME,DB_VER);
+    req.onupgradeneeded=ev=>ev.target.result.createObjectStore(STORE);
+    req.onsuccess=ev=>{ _db=ev.target.result; res(_db); };
+    req.onerror=rej;
+  });
+}
+async function stGet(k){
+  try{
+    const db=await openDB();
+    return new Promise((res,rej)=>{
+      const tx=db.transaction(STORE,"readonly");
+      const req=tx.objectStore(STORE).get(k);
+      req.onsuccess=()=>res(req.result??null);
+      req.onerror=rej;
+    });
+  }catch{ return null; }
+}
+async function stSet(k,v){
+  try{
+    const db=await openDB();
+    return new Promise((res,rej)=>{
+      const tx=db.transaction(STORE,"readwrite");
+      const req=tx.objectStore(STORE).put(v,k);
+      req.onsuccess=()=>res();
+      req.onerror=rej;
+    });
+  }catch{}
+}
 
 /* ── estilos base ── */
 const IS = { background:"#0f172a",border:"1px solid #334155",borderRadius:8,color:"#e2e8f0",padding:"8px 10px",fontSize:14,outline:"none",width:"100%",colorScheme:"dark" };
@@ -154,8 +186,10 @@ function App(){
   const [impSt,   setImpSt]   = useState(null);
 
   useEffect(()=>{
-    const r=stGet(STORAGE_KEY); if(r) setRegs(r);
-    const c=stGet(CONFIG_KEY);  if(c) setConfig(prev=>({...prev,...c}));
+    (async()=>{
+      const r=await stGet(STORAGE_KEY); if(r) setRegs(r);
+      const c=await stGet(CONFIG_KEY);  if(c) setConfig(prev=>({...prev,...c}));
+    })();
   },[]);
 
   function salvarRegs(v){ setRegs(v); stSet(STORAGE_KEY,v); }
@@ -185,11 +219,13 @@ function App(){
   const pares   = regs[data]||[{entrada:"",saida:""}];
   const jornada = Number(config.jornada)||480;
   const valorMin= parseFloat(config.valorMinuto)||0;
+  const folga   = regs[data+"__folga"] === true;
   const trabMin = calcDia(pares);
-  const difMin  = trabMin-jornada;
+  const difMin  = trabMin - (folga ? 0 : jornada);
   const reaisDiff=Math.abs(difMin)*valorMin;
 
   function setPares(v){ salvarRegs({...regs,[data]:v}); }
+  function toggleFolga(){ salvarRegs({...regs,[data+"__folga"]:!(regs[data+"__folga"]===true)}); }
   function updPar(i,campo,val){ setPares(pares.map((p,j)=>j===i?{...p,[campo]:val}:p)); }
   function addPar(){ setPares([...pares,{entrada:"",saida:""}]); }
   function delPar(i){ setPares(pares.length===1?[{entrada:"",saida:""}]:pares.filter((_,j)=>j!==i)); }
@@ -233,8 +269,16 @@ function App(){
           e("button",{onClick:()=>setData(hoje()),style:{...BS,padding:"6px 10px",fontSize:12,color:"#60a5fa"}},"Hoje")
         ),
         e("div",{style:{background:"#1e293b",borderRadius:14,padding:20,border:"1px solid #1e3a5f"}},
-          e("div",{style:{fontSize:13,color:"#94a3b8",marginBottom:14,fontWeight:500}},
-            "Batidas — "+fmtDia(data)+", "+fmtData(data)),
+          e("div",{style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}},
+            e("div",{style:{fontSize:13,color:"#94a3b8",fontWeight:500}},"Batidas — "+fmtDia(data)+", "+fmtData(data)),
+            e("button",{onClick:toggleFolga,style:{
+              background:folga?"#1e293b":"#0f172a",
+              border:"1px solid "+(folga?"#3b82f6":"#334155"),
+              borderRadius:20,padding:"4px 12px",cursor:"pointer",
+              color:folga?"#60a5fa":"#64748b",fontSize:12,fontWeight:600,
+              whiteSpace:"nowrap"
+            }},folga?"🌙 Folga":"📋 Dia útil")
+          ),
           pares.map((par,i)=>e("div",{key:i,style:{display:"flex",alignItems:"center",gap:8,marginBottom:10}},
             e("div",{style:{display:"flex",flexDirection:"column",alignItems:"center",gap:2,flex:1}},
               e("span",{style:{fontSize:10,color:"#64748b"}},"ENTRADA"),
@@ -250,12 +294,12 @@ function App(){
           e("button",{onClick:addPar,style:{...BS,width:"100%",background:"#0f172a",border:"1px dashed #334155",color:"#60a5fa",marginTop:4}},
             "+ Adicionar intervalo / outra entrada")
         ),
-        e(ResumoCard,{trabalhados:trabMin,jornada,diferenca:difMin,reaisDiff,valorMin})
+        e(ResumoCard,{trabalhados:trabMin,jornada:folga?0:jornada,diferenca:difMin,reaisDiff,valorMin})
       ),
 
       /* ── ABA HISTÓRICO ── */
       tab==="historico"&&(()=>{
-        const totalMin=saldoInicialMin+diasOrdenados.reduce((acc,d)=>acc+(calcDia(regs[d]||[])-jornada),0);
+        const totalMin=saldoInicialMin+diasOrdenados.reduce((acc,d)=>{ const fg=regs[d+"__folga"]===true; return acc+(calcDia(regs[d]||[])-(fg?0:jornada)); },0);
         const totalReais=Math.abs(totalMin)*valorMin;
         const pos=totalMin>=0;
         return e("div",{style:{display:"flex",flexDirection:"column",gap:10}},
@@ -284,7 +328,7 @@ function App(){
 
           diasOrdenados.map(d=>{
             const min=calcDia(regs[d]||[]);
-            const diff=min-jornada;
+            const fg=regs[d+"__folga"]===true; const diff=min-(fg?0:jornada);
             const reais=Math.abs(diff)*valorMin;
             return e(SwipeCard,{key:d, onDelete:()=>delDia(d)},
               e("div",{onClick:()=>{setData(d);setTab("dia");},
@@ -292,7 +336,7 @@ function App(){
                   padding:"14px 16px",cursor:"pointer",display:"flex",justifyContent:"space-between",alignItems:"center"}},
                 e("div",null,
                   e("div",{style:{fontWeight:600,fontSize:14}},fmtDia(d)+", "+fmtData(d)),
-                  e("div",{style:{fontSize:12,color:"#64748b",marginTop:2}},"Trabalhado: "+fromMin(min))
+                  e("div",{style:{fontSize:12,color:"#64748b",marginTop:2}},(isFolga?"🌙 Folga — ":"")+"Trabalhado: "+fromMin(min))
                 ),
                 e("div",{style:{textAlign:"right"}},
                   e("div",{style:{fontWeight:700,fontSize:15,color:diff>=0?"#22c55e":"#f87171"}},(diff>=0?"+":"")+fromMin(diff)),
