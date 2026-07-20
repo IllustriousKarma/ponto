@@ -185,17 +185,20 @@ function App(){
   const pares   = regs[data]||[{entrada:"",saida:""}];
   const jornada = Number(config.jornada)||480;
   const valorMin= parseFloat(config.valorMinuto)||0;
+  const folga = regs[data+"__folga"]===true;
+  function toggleFolga(){ salvarRegs({...regs,[data+"__folga"]:!folga}); }
+
   const trabMin = calcDia(pares);
-  const difMin  = trabMin-jornada;
+  const difMin  = trabMin-(folga?0:jornada);
   const reaisDiff=Math.abs(difMin)*valorMin;
 
   function setPares(v){ salvarRegs({...regs,[data]:v}); }
   function updPar(i,campo,val){ setPares(pares.map((p,j)=>j===i?{...p,[campo]:val}:p)); }
   function addPar(){ setPares([...pares,{entrada:"",saida:""}]); }
   function delPar(i){ setPares(pares.length===1?[{entrada:"",saida:""}]:pares.filter((_,j)=>j!==i)); }
-  function delDia(d){ const novo={...regs}; delete novo[d]; salvarRegs(novo); }
+  function delDia(d){ const novo={...regs}; delete novo[d]; delete novo[d+"__folga"]; salvarRegs(novo); }
 
-  const diasOrdenados=Object.keys(regs).sort((a,b)=>b.localeCompare(a));
+  const diasOrdenados=Object.keys(regs).filter(k=>!k.includes('__')).sort((a,b)=>b.localeCompare(a));
 
   const saldoInicialMin=(()=>{
     const h=parseInt(config.saldoInicialH)||0;
@@ -233,8 +236,17 @@ function App(){
           e("button",{onClick:()=>setData(hoje()),style:{...BS,padding:"6px 10px",fontSize:12,color:"#60a5fa"}},"Hoje")
         ),
         e("div",{style:{background:"#1e293b",borderRadius:14,padding:20,border:"1px solid #1e3a5f"}},
-          e("div",{style:{fontSize:13,color:"#94a3b8",marginBottom:14,fontWeight:500}},
-            "Batidas — "+fmtDia(data)+", "+fmtData(data)),
+          e("div",{style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}},
+            e("div",{style:{fontSize:13,color:"#94a3b8",fontWeight:500}},
+              "Batidas — "+fmtDia(data)+", "+fmtData(data)),
+            e("button",{onClick:()=>toggleFolga(),style:{
+              background:folga?"#1e3a5f":"#0f172a",
+              border:"1px solid "+(folga?"#3b82f6":"#334155"),
+              borderRadius:20,padding:"4px 12px",cursor:"pointer",
+              fontSize:12,color:folga?"#60a5fa":"#64748b",
+              fontWeight:folga?600:400,whiteSpace:"nowrap"
+            }},folga?"🌙 Folga":"📋 Dia útil")
+          ),
           pares.map((par,i)=>e("div",{key:i,style:{display:"flex",alignItems:"center",gap:8,marginBottom:10}},
             e("div",{style:{display:"flex",flexDirection:"column",alignItems:"center",gap:2,flex:1}},
               e("span",{style:{fontSize:10,color:"#64748b"}},"ENTRADA"),
@@ -250,12 +262,12 @@ function App(){
           e("button",{onClick:addPar,style:{...BS,width:"100%",background:"#0f172a",border:"1px dashed #334155",color:"#60a5fa",marginTop:4}},
             "+ Adicionar intervalo / outra entrada")
         ),
-        e(ResumoCard,{trabalhados:trabMin,jornada,diferenca:difMin,reaisDiff,valorMin})
+        e(ResumoCard,{trabalhados:trabMin,jornada:folga?0:jornada,diferenca:difMin,reaisDiff,valorMin})
       ),
 
       /* ── ABA HISTÓRICO ── */
       tab==="historico"&&(()=>{
-        const totalMin=saldoInicialMin+diasOrdenados.reduce((acc,d)=>acc+(calcDia(regs[d]||[])-jornada),0);
+        const totalMin=saldoInicialMin+diasOrdenados.reduce((acc,d)=>acc+(calcDia(regs[d]||[])-(regs[d+'__folga']===true?0:jornada)),0);
         const totalReais=Math.abs(totalMin)*valorMin;
         const pos=totalMin>=0;
         return e("div",{style:{display:"flex",flexDirection:"column",gap:10}},
@@ -284,7 +296,7 @@ function App(){
 
           diasOrdenados.map(d=>{
             const min=calcDia(regs[d]||[]);
-            const diff=min-jornada;
+            const diff=min-(regs[d+'__folga']===true?0:jornada);
             const reais=Math.abs(diff)*valorMin;
             return e(SwipeCard,{key:d, onDelete:()=>delDia(d)},
               e("div",{onClick:()=>{setData(d);setTab("dia");},
